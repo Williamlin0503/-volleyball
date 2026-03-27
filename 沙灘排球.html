@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>賽博機甲聯賽：霓虹電網版</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        body { background: #010105; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: 'Press Start 2P', cursive; color: #0ff; overflow: hidden; }
+        #game-wrapper { position: relative; padding: 10px; background: #0a0a15; border-radius: 8px; box-shadow: 0 0 40px rgba(0,255,255,0.15); }
+        #game-container { position: relative; overflow: hidden; border: 3px solid #111; background: #000; }
+        canvas { display: block; image-rendering: pixelated; }
+        
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; }
+        .btn { width: 340px; padding: 18px; font-size: 13px; background: transparent; border: 2px solid #0ff; color: #0ff; cursor: pointer; font-family: 'Press Start 2P', cursive; margin: 12px; transition: 0.2s; text-transform: uppercase; letter-spacing: 1px; }
+        .btn:hover { background: #0ff2; box-shadow: 0 0 15px #0ff; border-color: #fff; }
+
+        .select-header { color: #fdfd02; text-shadow: 0 0 10px #fdfd02; margin-bottom: 25px; font-size: 18px; }
+        .selection-group { display: flex; gap: 15px; margin-bottom: 25px; }
+        .sel-item { border: 2px solid #222; padding: 15px; cursor: pointer; width: 170px; text-align: center; background: #050510; transition: 0.3s; }
+        .sel-item.active { border-color: #0ff; box-shadow: 0 0 20px rgba(0,255,255,0.4); background: #0ff1; transform: translateY(-5px); }
+        .sel-item.active2 { border-color: #f0f; box-shadow: 0 0 20px rgba(255,0,255,0.4); background: #f0f1; transform: translateY(-5px); }
+        
+        .mecha-name-cn { font-family: sans-serif; font-size: 24px; font-weight: bold; color: #fff; display: block; margin: 8px 0; }
+        .mecha-desc-cn { font-family: sans-serif; font-size: 15px; color: #888; line-height: 1.4; text-align: left; }
+
+        .hud { display: flex; justify-content: space-between; width: 800px; margin-bottom: 12px; align-items: flex-end; }
+        .energy-bar { width: 150px; height: 8px; background: #111; border: 1px solid #333; margin-top: 6px; position: relative; }
+        .energy-fill { height: 100%; width: 0%; transition: width 0.2s; }
+        
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+        .full-energy { animation: pulse 0.6s infinite; box-shadow: 0 0 15px currentColor; }
+    </style>
+</head>
+<body>
+
+<div class="hud">
+    <div><span style="color:#0ff; font-size:12px;">P1 SCORE: <span id="s1" style="font-size:20px;">00</span></span><div class="energy-bar"><div id="e1" class="energy-fill" style="background:#0ff;"></div></div></div>
+    <div style="text-align:center; font-size:8px; color:#444; padding-bottom:5px;">CYBER ARENA // RESET: [ESC]</div>
+    <div style="text-align:right;"><span style="color:#f0f; font-size:12px;"><span id="s2" style="font-size:20px;">00</span> :SCORE P2</span><div class="energy-bar"><div id="e2" class="energy-fill" style="background:#f0f; float:right;"></div></div></div>
+</div>
+
+<div id="game-wrapper">
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+        <div id="menu-overlay" class="overlay">
+            <h1 style="color: #fff; letter-spacing: 5px; text-shadow: 0 0 20px #0ff; font-size: 26px;">CYBER MECHA PRO</h1>
+            <button class="btn" onclick="initSelect(1)">單人挑戰 (CPU)</button>
+            <button class="btn" onclick="initSelect(2)">雙人對戰 (Local)</button>
+        </div>
+        <div id="select-overlay" class="overlay" style="display:none;">
+            <h2 id="sel-title" class="select-header">// [P1 角色選擇]</h2>
+            <div class="selection-group">
+                <div class="sel-item active" onclick="pick(0, this)">
+                    <div style="font-size:32px;">⚡</div><span class="mecha-name-cn">雷霆</span><div class="mecha-desc-cn">• 移動極速<br>• 能量恢復加快</div>
+                </div>
+                <div class="sel-item" onclick="pick(1, this)">
+                    <div style="font-size:32px;">🛡️</div><span class="mecha-name-cn">重裝</span><div class="mecha-desc-cn">• 體型龐大<br>• 強力對地扣殺</div>
+                </div>
+                <div class="sel-item" onclick="pick(2, this)">
+                    <div style="font-size:32px;">🌀</div><span class="mecha-name-cn">幽能</span><div class="mecha-desc-cn">• 跳躍高度極高<br>• 空中控制力強</div>
+                </div>
+            </div>
+            <button id="next-btn" class="btn" onclick="handleNextPhase()">確認 P1 部署</button>
+        </div>
+        <div id="win-overlay" class="overlay" style="display:none;">
+            <h2 id="win-msg" style="font-size:26px; color:#fff;">MATCH OVER</h2>
+            <button class="btn" onclick="location.reload()">重新連線</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let gameActive = false, gameMode = 1, currentPhase = 0;
+    let selP1 = 0, selP2 = 0, timeScale = 1;
+
+    const MECHA_CONF = [
+        { speed: 9.2, jump: -14, w: 46, e: 24 },
+        { speed: 6.8, jump: -12.5, w: 74, e: 16 },
+        { speed: 7.8, jump: -18.2, w: 50, e: 20 }
+    ];
+
+    let p1 = { x: 150, y: 350, vy: 0, score: 0, energy: 0, type: 0, trail: [] };
+    let p2 = { x: 650, y: 350, vy: 0, score: 0, energy: 0, type: 0, trail: [] };
+    let ball = { x: 400, y: 100, vx: 0, vy: 0, radius: 12, super: false, trail: [] };
+    
+    // 背景科技物件
+    let hoverCars = [{x: 100, y: 120, s: 0.8}, {x: 500, y: 80, s: 1.2}];
+
+    // 音效
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSound(freq, type, dur, vol=0.05) {
+        try {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + dur);
+        } catch(e){}
+    }
+
+    const keys = {};
+    window.onkeydown = e => { keys[e.code] = true; if(e.code==='Escape') location.reload(); };
+    window.onkeyup = e => keys[e.code] = false;
+
+    function initSelect(m) {
+        gameMode = m; document.getElementById('menu-overlay').style.display='none';
+        document.getElementById('select-overlay').style.display='flex';
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function pick(v, el) {
+        document.querySelectorAll('.sel-item').forEach(i=>i.className='sel-item');
+        el.className = currentPhase===0?'sel-item active':'sel-item active2';
+        if(currentPhase===0) selP1 = v; else selP2 = v;
+        playSound(440 + v*80, 'square', 0.1);
+    }
+
+    function handleNextPhase() {
+        if(gameMode===2 && currentPhase===0) {
+            currentPhase = 1;
+            document.getElementById('sel-title').innerText = "// [P2 角色選擇]";
+            document.getElementById('sel-title').style.color = "#f0f";
+            document.getElementById('next-btn').innerText = "開始競技";
+            document.querySelectorAll('.sel-item').forEach(i=>i.className='sel-item');
+            document.querySelectorAll('.sel-item')[0].className='sel-item active2';
+        } else {
+            p1.type = selP1; p2.type = (gameMode===1)?Math.floor(Math.random()*3):selP2;
+            document.getElementById('select-overlay').style.display='none';
+            gameActive = true; resetBall(1);
+        }
+    }
+
+    function resetBall(w) { ball.x=w===1?200:600; ball.y=100; ball.vx=0; ball.vy=0; ball.super=false; timeScale=1; ball.trail=[]; }
+
+    function update() {
+        if(!gameActive) return;
+        let dt = 1 * timeScale;
+        const c1 = MECHA_CONF[p1.type], c2 = MECHA_CONF[p2.type];
+
+        if(keys['KeyA'] && p1.x > 35) p1.x -= c1.speed * dt;
+        if(keys['KeyD'] && p1.x < 375) p1.x += c1.speed * dt;
+        if(keys['KeyW'] && p1.y >= 350) p1.vy = c1.jump;
+        if(keys['Space'] && p1.energy >= 100 && Math.abs(ball.x-p1.x)<70 && ball.y < p1.y) {
+            ball.vx = 20; ball.vy = 22; ball.super = true; p1.energy = 0; playSound(100, 'sawtooth', 0.4);
+        }
+
+        if(gameMode===2) {
+            if(keys['ArrowLeft'] && p2.x > 425) p2.x -= c2.speed * dt;
+            if(keys['ArrowRight'] && p2.x < 765) p2.x += c2.speed * dt;
+            if(keys['ArrowUp'] && p2.y >= 350) p2.vy = c2.jump;
+            if(keys['Enter'] && p2.energy >= 100 && Math.abs(ball.x-p2.x)<70 && ball.y < p2.y) {
+                ball.vx = -20; ball.vy = 22; ball.super = true; p2.energy = 0; playSound(100, 'sawtooth', 0.4);
+            }
+        } else {
+            let tx = ball.x + ball.vx*8; if(p2.x < tx-15) p2.x+=c2.speed*0.75*dt; else if(p2.x > tx+15) p2.x-=c2.speed*0.75*dt;
+            if(p2.x < 425) p2.x = 425;
+            if(ball.y < 300 && Math.abs(p2.x-ball.x)<60 && p2.y>=350) p2.vy = c2.jump;
+            if(p2.energy>=100 && ball.x>450 && ball.y<200 && Math.abs(ball.x-p2.x)<40) { ball.vx=-20; ball.vy=22; ball.super=true; p2.energy=0; }
+        }
+
+        [p1, p2].forEach(p => { 
+            p.y += p.vy * dt; if(p.y < 350) p.vy += 0.7 * dt; else { p.y = 350; p.vy = 0; }
+            p.trail.push({x:p.x, y:p.y}); if(p.trail.length > 6) p.trail.shift();
+        });
+
+        ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.vy += 0.35 * dt;
+        ball.trail.push({x:ball.x, y:ball.y}); if(ball.trail.length > 12) ball.trail.shift();
+
+        if(ball.x < 15 || ball.x > 785) { ball.vx *= -0.85; ball.x = ball.x<400?15:785; playSound(600,'square',0.05, 0.02); }
+        if(ball.y < 15) { ball.vy = 4; ball.y = 15; }
+        // 網子碰撞
+        if(ball.x > 388 && ball.x < 412 && ball.y > 250) { 
+            ball.vx *= -1.2; ball.x = (ball.x < 400) ? 387 : 413; playSound(700,'square',0.05, 0.02); 
+            ball.super = false;
+        }
+
+        [p1, p2].forEach(p => {
+            let dx = ball.x - p.x, dy = ball.y - (p.y - 15);
+            if(Math.sqrt(dx*dx + dy*dy) < (MECHA_CONF[p.type].w/2 + 20)) {
+                ball.vy = -12.5; ball.vx = dx * 0.45; ball.super = false;
+                p.energy = Math.min(100, p.energy + MECHA_CONF[p.type].e);
+                playSound(300,'sine',0.1); updateUI();
+            }
+        });
+
+        if((p1.score >= 24 || p2.score >= 24) && ball.y > 330) timeScale = 0.4; else timeScale = 1;
+
+        if(ball.y > 405) {
+            if(ball.x < 400) p2.score++; else p1.score++;
+            playSound(80,'triangle',0.5, 0.1); updateUI();
+            if(p1.score>=25 || p2.score>=25) {
+                gameActive=false; document.getElementById('win-msg').innerText = p1.score>=25?"P1 SYSTEM CLEAR":"P2 SYSTEM CLEAR";
+                document.getElementById('win-overlay').style.display='flex';
+            } else resetBall(ball.x<400?2:1);
+        }
+
+        // 背景飛行船移動
+        hoverCars.forEach(c => { c.x += c.s; if(c.x > 850) c.x = -100; });
+    }
+
+    function updateUI() {
+        document.getElementById('s1').innerText = p1.score.toString().padStart(2,'0');
+        document.getElementById('s2').innerText = p2.score.toString().padStart(2,'0');
+        const e1 = document.getElementById('e1'), e2 = document.getElementById('e2');
+        e1.style.width = p1.energy + "%"; e2.style.width = p2.energy + "%";
+        p1.energy >= 100 ? e1.classList.add('full-energy') : e1.classList.remove('full-energy');
+        p2.energy >= 100 ? e2.classList.add('full-energy') : e2.classList.remove('full-energy');
+    }
+
+    function draw() {
+        ctx.fillStyle="#010108"; ctx.fillRect(0,0,800,400);
+
+        // --- 優化後的科技感背景 ---
+        // 賽博建築
+        ctx.fillStyle="#08081a"; ctx.strokeStyle="#0ff2"; ctx.lineWidth=1;
+        for(let i=0;i<800;i+=80) { 
+            ctx.fillRect(i, 200+(i%110), 60, 200); 
+            ctx.strokeRect(i+10, 200+(i%110), 40, 200); // 建築發光線條
+            ctx.fillStyle="#0ff3"; ctx.fillRect(i+25, 180+(i%110), 10, 20); // 天線核心
+            ctx.fillStyle="#08081a"; // 重置
+        }
+        
+        // 飛行船 (Hover Traffic)
+        hoverCars.forEach((c, idx) => {
+            ctx.fillStyle = idx === 0 ? "#111" : "#1a1a2e"; ctx.fillRect(c.x, c.y, 50, 20);
+            ctx.fillStyle = idx === 0 ? "#0ff" : "#f0f"; ctx.fillRect(c.x-5, c.y+5, 10, 10); // 推進器光
+        });
+
+        // 地板
+        ctx.fillStyle="#111"; ctx.fillRect(0,350,800,50);
+        ctx.strokeStyle="#0ff2"; ctx.lineWidth=1; ctx.beginPath();
+        for(let i=0;i<=800;i+=40) { ctx.moveTo(i,350); ctx.lineTo(i,400); }
+        for(let i=350;i<=400;i+=10) { ctx.moveTo(0,i); ctx.lineTo(800,i); }
+        ctx.stroke();
+
+        // --- 重新設計：超級明顯的網子 ---
+        // 網柱 (特斯拉線圈造型)
+        ctx.fillStyle="#1a1a3a"; ctx.fillRect(397, 260, 6, 140); 
+        ctx.fillStyle="#fff"; ctx.globalAlpha = 0.5 + Math.random()*0.3; ctx.fillRect(392, 255, 16, 10); ctx.globalAlpha = 1;
+
+        // 螢光電漿網 (粗、明顯)
+        ctx.strokeStyle="#0ff"; ctx.shadowBlur = 10; ctx.shadowColor = "#0ff";
+        ctx.lineWidth = 4; ctx.beginPath();
+        // 畫霓虹線條網格
+        for(let i=0; i<8; i++) {
+            let wy = 265 + i*18;
+            ctx.moveTo(398, wy);
+            ctx.quadraticCurveTo(400 + Math.sin(Date.now()/80+i)*8, wy+9, 398, wy+18);
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0; // 重置
+
+        // --- 其他物件保持原樣 ---
+        // 球殘影
+        ball.trail.forEach((t,i) => {
+            ctx.globalAlpha = i/20; ctx.fillStyle = ball.super?"#fff":"#0ff";
+            ctx.beginPath(); ctx.arc(t.x, t.y, 10*(i/12), 0, Math.PI*2); ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+
+        // 機甲
+        [p1, p2].forEach((p, idx) => {
+            const conf = MECHA_CONF[p.type];
+            ctx.save(); ctx.translate(p.x, p.y);
+            p.trail.forEach((t, i) => {
+                ctx.globalAlpha = i/12; ctx.fillStyle = idx===0?"#0ff":"#f0f";
+                ctx.fillRect(t.x-p.x-conf.w/2, t.y-p.y-48, conf.w, 48);
+            });
+            ctx.globalAlpha = 1; ctx.fillStyle = idx===0?"#0ff":"#f0f";
+            if(p.energy>=100) { ctx.shadowBlur=15; ctx.shadowColor=ctx.fillStyle; }
+            ctx.fillRect(-conf.w/2, -50, conf.w, 50);
+            ctx.fillStyle="#000"; ctx.fillRect(-conf.w/2+4, -46, conf.w-8, 42);
+            ctx.fillStyle=idx===0?"#0ff":"#f0f"; ctx.fillRect(-conf.w/2+10, -32, conf.w-20, 4);
+            ctx.restore();
+        });
+
+        // 球核心
+        ctx.save(); ctx.translate(ball.x, ball.y);
+        ctx.fillStyle = ball.super?"#fff":"#0ff";
+        if(ball.super) { ctx.shadowBlur=20; ctx.shadowColor="#fff"; }
+        ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+
+        update(); requestAnimationFrame(draw);
+    }
+    updateUI(); draw();
+</script>
+</body>
+</html>
+
